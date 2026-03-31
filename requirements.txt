@@ -1,0 +1,5 @@
+torch>=2.0.0
+torchvision>=0.15.0
+wandb>=0.16.0
+h5py>=3.8.0
+gdown>=4.7.0
