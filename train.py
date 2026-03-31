@@ -207,6 +207,13 @@ def main() -> None:
         )
         val_metrics = evaluate(model, val_loader, criterion, device, use_amp)
 
+        print(
+            f"epoch {epoch + 1}/{args.epochs} "
+            f"train loss {train_metrics['loss']:.4f} acc {train_metrics['acc']:.4f} | "
+            f"val loss {val_metrics['loss']:.4f} acc {val_metrics['acc']:.4f}",
+            flush=True,
+        )
+
         wandb.log(
             {
                 "epoch": epoch,
