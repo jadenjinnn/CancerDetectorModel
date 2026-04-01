@@ -75,12 +75,6 @@ def train_one_epoch(
                 }
             )
 
-        if batch_idx == 0:
-            print(
-                f"  first train batch ok (epoch {epoch + 1}), loss={loss.item():.4f}",
-                flush=True,
-            )
-
     return {
         "loss": total_loss / max(total, 1),
         "acc": total_correct / max(total, 1),
@@ -129,7 +123,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=0.0)
-    p.add_argument("--num-workers", type=int, default=2)
+    p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--log-interval", type=int, default=50)
     p.add_argument("--wandb-project", type=str, default="CancerDetectorModel")
@@ -139,6 +133,10 @@ def parse_args() -> argparse.Namespace:
                    help="Disable mixed precision (CUDA only)")
     p.add_argument("--no-wandb", action="store_true",
                    help="Dry run without logging to W&B")
+    p.add_argument("--save-freq", type=int, default=3,
+                   help="Save checkpoint every N epochs")
+    p.add_argument("--checkpoint-dir", type=str, default="./checkpoints",
+                   help="Directory to save checkpoints")
     return p.parse_args()
 
 
@@ -200,16 +198,6 @@ def main() -> None:
         num_workers=args.num_workers,
         pin_memory=device.type == "cuda",
     )
-    print(
-        f"PCam loaded: train len={len(train_ds)} val len={len(val_ds)} "
-        f"| train batches/epoch={len(train_loader)}",
-        flush=True,
-    )
-    print(
-        "Note: epoch summary prints only after each full train+val pass; "
-        "full train set can take many minutes per epoch.",
-        flush=True,
-    )
 
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
     model.fc = nn.Linear(model.fc.in_features, 2)
@@ -224,7 +212,6 @@ def main() -> None:
     wandb.watch(model, log="gradients", log_freq=500)
 
     for epoch in range(args.epochs):
-        print(f"Epoch {epoch + 1}/{args.epochs}: training...", flush=True)
         train_metrics = train_one_epoch(
             model,
             train_loader,
@@ -236,15 +223,7 @@ def main() -> None:
             args.log_interval,
             use_amp,
         )
-        print(f"Epoch {epoch + 1}/{args.epochs}: validating...", flush=True)
         val_metrics = evaluate(model, val_loader, criterion, device, use_amp)
-
-        print(
-            f"epoch {epoch + 1}/{args.epochs} "
-            f"train loss {train_metrics['loss']:.4f} acc {train_metrics['acc']:.4f} | "
-            f"val loss {val_metrics['loss']:.4f} acc {val_metrics['acc']:.4f}",
-            flush=True,
-        )
 
         wandb.log(
             {
@@ -256,6 +235,10 @@ def main() -> None:
                 "lr": optimizer.param_groups[0]["lr"],
             }
         )
+
+        if (epoch + 1) % args.save_freq == 0:
+            torch.save(model.state_dict(), os.path.join(
+                args.checkpoint_dir, f"model_epoch_{epoch + 1}.pth"))
 
     wandb.finish()
 
