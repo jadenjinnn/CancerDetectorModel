@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
@@ -74,6 +75,12 @@ def train_one_epoch(
                 }
             )
 
+        if batch_idx == 0:
+            print(
+                f"  first train batch ok (epoch {epoch + 1}), loss={loss.item():.4f}",
+                flush=True,
+            )
+
     return {
         "loss": total_loss / max(total, 1),
         "acc": total_correct / max(total, 1),
@@ -137,9 +144,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    _reconf = getattr(sys.stdout, "reconfigure", None)
+    if callable(_reconf):
+        try:
+            _reconf(line_buffering=True)
+        except OSError:
+            pass
+
     set_seed(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(
+        f"device={device} epochs={args.epochs} batch_size={args.batch_size} "
+        f"data_dir={args.data_dir}",
+        flush=True,
+    )
     use_amp = device.type == "cuda" and not args.no_amp
     scaler: GradScaler | None = GradScaler() if use_amp else None
 
@@ -151,6 +170,7 @@ def main() -> None:
         name=args.wandb_run_name,
         config=vars(args),
     )
+    print("wandb.init done", flush=True)
 
     transform = transforms.Compose(
         [
@@ -180,6 +200,16 @@ def main() -> None:
         num_workers=args.num_workers,
         pin_memory=device.type == "cuda",
     )
+    print(
+        f"PCam loaded: train len={len(train_ds)} val len={len(val_ds)} "
+        f"| train batches/epoch={len(train_loader)}",
+        flush=True,
+    )
+    print(
+        "Note: epoch summary prints only after each full train+val pass; "
+        "full train set can take many minutes per epoch.",
+        flush=True,
+    )
 
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
     model.fc = nn.Linear(model.fc.in_features, 2)
@@ -191,9 +221,10 @@ def main() -> None:
         weight_decay=args.weight_decay,
     )
 
-    wandb.watch(model, log="all", log_freq=100)
+    wandb.watch(model, log="gradients", log_freq=500)
 
     for epoch in range(args.epochs):
+        print(f"Epoch {epoch + 1}/{args.epochs}: training...", flush=True)
         train_metrics = train_one_epoch(
             model,
             train_loader,
@@ -205,6 +236,7 @@ def main() -> None:
             args.log_interval,
             use_amp,
         )
+        print(f"Epoch {epoch + 1}/{args.epochs}: validating...", flush=True)
         val_metrics = evaluate(model, val_loader, criterion, device, use_amp)
 
         print(
