@@ -18,6 +18,11 @@ from torchvision import datasets, transforms, models
 import wandb
 
 
+def set_backbone_requires_grad(model: nn.Module, trainable: bool) -> None:
+    for name, p in model.named_parameters():
+        p.requires_grad = trainable or name.startswith("fc.")
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -139,6 +144,18 @@ def parse_args() -> argparse.Namespace:
                    help="Save checkpoint every N epochs")
     p.add_argument("--checkpoint-dir", type=str, default="./checkpoints",
                    help="Directory to save checkpoints")
+    p.add_argument(
+        "--freeze-backbone",
+        action="store_true",
+        help="Train only the classifier head; keep pretrained backbone frozen",
+    )
+    p.add_argument(
+        "--scheduler",
+        type=str,
+        choices=("none", "cosine"),
+        default="none",
+        help="LR schedule: cosine annealing to 0 over --epochs (full-network fits)",
+    )
     return p.parse_args()
 
 
@@ -204,12 +221,21 @@ def main() -> None:
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
     model.fc = nn.Linear(model.fc.in_features, 2)
     model = model.to(device)
+    if args.freeze_backbone:
+        set_backbone_requires_grad(model, trainable=False)
+
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        (p for p in model.parameters() if p.requires_grad),
         lr=args.lr,
         weight_decay=args.weight_decay,
     )
+
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
+    if args.scheduler == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs
+        )
 
     wandb.watch(model, log="gradients", log_freq=500)
 
@@ -240,6 +266,9 @@ def main() -> None:
             },
             step=epoch_end_step,
         )
+
+        if scheduler is not None:
+            scheduler.step()
 
         if (epoch + 1) % args.save_freq == 0:
             torch.save(model.state_dict(), os.path.join(
