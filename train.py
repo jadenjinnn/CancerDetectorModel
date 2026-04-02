@@ -67,12 +67,14 @@ def train_one_epoch(
         total += bs
 
         if batch_idx % log_interval == 0:
+            global_step = epoch * num_batches + batch_idx
             wandb.log(
                 {
                     "train/batch_loss": loss.item(),
                     "train/epoch": epoch,
-                    "train/batch": epoch * num_batches + batch_idx,
-                }
+                    "train/batch": global_step,
+                },
+                step=global_step,
             )
 
     return {
@@ -121,7 +123,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train with AMP + W&B")
     p.add_argument("--epochs", type=int, default=5)
     p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--weight-decay", type=float, default=0.0)
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--seed", type=int, default=42)
@@ -211,6 +213,7 @@ def main() -> None:
 
     wandb.watch(model, log="gradients", log_freq=500)
 
+    num_batches = len(train_loader)
     for epoch in range(args.epochs):
         train_metrics = train_one_epoch(
             model,
@@ -225,6 +228,7 @@ def main() -> None:
         )
         val_metrics = evaluate(model, val_loader, criterion, device, use_amp)
 
+        epoch_end_step = (epoch + 1) * num_batches - 1
         wandb.log(
             {
                 "epoch": epoch,
@@ -233,7 +237,8 @@ def main() -> None:
                 "val/loss": val_metrics["loss"],
                 "val/acc": val_metrics["acc"],
                 "lr": optimizer.param_groups[0]["lr"],
-            }
+            },
+            step=epoch_end_step,
         )
 
         if (epoch + 1) % args.save_freq == 0:
